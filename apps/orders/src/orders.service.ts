@@ -3,6 +3,7 @@ import { CreateOrderRequest } from './dto/create-order.request';
 import { OrdersRepository } from './orders.repository';
 import { BILLING_SERVICE } from './constants/services';
 import { ClientProxy } from '@nestjs/microservices';
+import { lastValueFrom } from 'rxjs';
 
 @Injectable()
 export class OrdersService {
@@ -11,7 +12,19 @@ export class OrdersService {
     @Inject(BILLING_SERVICE) private billingClient: ClientProxy,
   ) {}
   async createOrder(request: CreateOrderRequest) {
-    return this.ordersRepository.create(request);
+    const session = await this.ordersRepository.startTransaction();
+    try {
+      const order = this.ordersRepository.create(request, { session });
+      await lastValueFrom(
+        this.billingClient.emit('order_created', { request }),
+      );
+      await session.commitTransaction();
+
+      return order;
+    } catch (err) {
+      await session.abortTransaction();
+      throw err;
+    }
   }
 
   getOrders() {
